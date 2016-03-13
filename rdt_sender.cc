@@ -39,23 +39,6 @@ size_t next_seq = 0;
 static inline unsigned short
 checksum(unsigned char *addr, size_t count);
 
-/* compare 3 numbers in a ring, b in [a, c] */
-static inline bool
-between(size_t a, size_t b, size_t c) {
-    return ((a <= b && b <= c) || (c<a&&a<=b) || (b<=c&&c<a));
-}
-
-/* operations in the ring mod by 'max' */
-static inline size_t
-add(size_t a, size_t b, size_t max) {
-    return ((a+b) % max);
-}
-
-static inline size_t
-minus(size_t a, size_t b, size_t max) {
-    return ((a+max-b) % max);
-}
-
 /* sender initialization, called once at the very beginning */
 void Sender_Init()
 {
@@ -95,6 +78,7 @@ void Sender_FromUpperLayer(struct message *msg)
         memcpy(pkt->data+header_size, msg->data+cursor, pkt->data[2]);
         *((unsigned short *)&pkt->data[0]) 
                 = checksum((unsigned char *)&pkt->data[2], pkt->data[2]+2);
+
 	    if(n_snd_win < WIN_SIZE) {  // window is not full
             unsigned short pos = (snd_win_t+n_snd_win) % WIN_SIZE;    
             win[pos] = pkt;
@@ -135,14 +119,13 @@ void Sender_FromLowerLayer(struct packet *pkt) {
         Sender_StopTimer();
     // printf("receive_ack: %d\n", ack);
 
-    size_t dpos = minus(ack, min_ack, MAX_SEQ+1);
+    size_t dpos = (ack+ MAX_SEQ + 1 - min_ack) % (MAX_SEQ + 1);
     if(dpos >= n_snd_win) {
         if(n_snd_win != 0 && !Sender_isTimerSet())
             Sender_StartTimer(TIMEOUT);
         return;
     }
         
-
     for(size_t i=0; i < dpos+1; i++) {
         delete win[snd_win_t++];
         snd_win_t %= WIN_SIZE;
