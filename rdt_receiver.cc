@@ -24,13 +24,17 @@
 #define WIN_SIZE    10
 #define ACK_MAGIC   729
 
+#define P_CKSUM     0
+#define P_SIZE      4
+#define P_SEQ       5
+
 message *rcv_win[WIN_SIZE] = { 0 };
 size_t  rcv_win_tailer   = 0;
 size_t  n_rcv_win        = 0;  // elements in window
 size_t  expected_ack     = 0;
 
-/* 16 bit in Internet checksum */
-static inline unsigned short
+/* 32 bit in Internet checksum */
+static inline unsigned int
 checksum(unsigned char *addr, size_t count);
 
 /* compare 3 numbers in a ring, b in [a, c] */
@@ -39,6 +43,7 @@ between(size_t a, size_t b, size_t c) {
     return ((a <= b && b <= c) || (c<a&&a<=b) || (b<=c&&c<a));
 }
 
+/* define ACK_MAGIC and copy for 5 times */
 static inline void
 send_ack(size_t seq) {
     packet *ack = new packet;
@@ -54,8 +59,7 @@ send_ack(size_t seq) {
 }
 
 /* receiver initialization, called once at the very beginning */
-void Receiver_Init()
-{
+void Receiver_Init() {
     fprintf(stdout, "At %.2fs: receiver initializing ...\n", GetSimulationTime());
 }
 
@@ -63,8 +67,7 @@ void Receiver_Init()
    you may find that you don't need it, in which case you can leave it blank.
    in certain cases, you might want to use this opportunity to release some 
    memory you allocated in Receiver_init(). */
-void Receiver_Final()
-{
+void Receiver_Final() {
     fprintf(stdout, "At %.2fs: receiver finalizing ...\n", GetSimulationTime());
 }
 
@@ -72,29 +75,30 @@ void Receiver_Final()
    receiver */
 void Receiver_FromLowerLayer(struct packet *pkt)
 {
-    int header_size = 4;    // checksum(2B) + size(1B) + seq(1B)
+    int header_size = 6;    // checksum(4B) + size(1B) + seq(1B)
     size_t rcv_seq  = 0;
-    unsigned short cksum = 0;
+    unsigned int cksum = 0;
 
     /* construct a message and deliver to the upper layer */
     struct message *msg = (struct message*) malloc(sizeof(struct message));
     ASSERT(msg!=NULL);
 
-    msg->size = pkt->data[2];
-    rcv_seq = pkt->data[3];
-    cksum = *((unsigned short *)pkt->data);
+    msg->size = pkt->data[P_SIZE];
+    rcv_seq = pkt->data[P_SEQ];
+    cksum = *((unsigned int *)pkt->data);
 
     /* sanity check in case the packet is corrupted */
     if (msg->size<0) msg->size=0;
     if (msg->size>RDT_PKTSIZE-header_size) msg->size=RDT_PKTSIZE-header_size;
-    if(cksum != checksum((unsigned char *)&pkt->data[2], msg->size+2)) {
+    if(cksum != checksum((unsigned char *)&pkt->data[P_SIZE], msg->size+2)) {
         // printf("DROP!\n");
         return;     // just drop the bad packet
     }
 
+    /* receive a packet received before */
     if(!between(expected_ack, rcv_seq, (expected_ack+WIN_SIZE-1)%(MAX_SEQ+1))) {
         send_ack((expected_ack+MAX_SEQ) % (MAX_SEQ+1));
-        return;
+        return;     // drop
     }
 
     msg->data = (char*) malloc(msg->size);
@@ -108,6 +112,7 @@ void Receiver_FromLowerLayer(struct packet *pkt)
     n_rcv_win++;
 
     // printf("rcv_seq=%d, e_ack=%d\n", rcv_seq, expected_ack);
+    /* receive a expected packet and slide window */
     if(rcv_seq == expected_ack) {
         while(n_rcv_win > 0 && rcv_win[rcv_win_tailer] != NULL) {
             msg = rcv_win[rcv_win_tailer];
@@ -122,23 +127,23 @@ void Receiver_FromLowerLayer(struct packet *pkt)
         }
 
         rcv_seq = (rcv_seq-1) % (MAX_SEQ+1);
-        /* send ack */
-        send_ack(rcv_seq);    
+        send_ack(rcv_seq);    // send ack
     } else {
-        send_ack((expected_ack+MAX_SEQ) % (MAX_SEQ+1));
+        send_ack((expected_ack+MAX_SEQ) % (MAX_SEQ+1));   // send e_ack - 1
     }
 }
 
-static inline unsigned short
+// same as the one defined in 'rdt_sender.cc'
+static inline unsigned int
 checksum(unsigned char *addr, size_t count) {
-    unsigned int sum = 0;
+    unsigned long long int sum = 0;
     unsigned short *sp = (unsigned short *)addr;
     for( ; count > 1; count -= 2) 
         sum += *(sp++);
     if(count > 0)       // count is a odd number
         sum += addr[count - 1];
     // add high 16-bit to low 16-bit
-    sum = (sum & 0xFFFF) + (sum >> 16);
-    sum = (~sum) & 0xFFFF;
+    sum = (sum & 0xFFFFFFFF) + (sum >> 32);
+    sum = (~sum) & 0xFFFFFFFF;
     return sum;
 }
