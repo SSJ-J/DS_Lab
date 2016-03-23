@@ -20,6 +20,8 @@ public:
     DSDV(unsigned short portnum, char *fname);
 
     void printTable();
+    void run();
+    void *thr_receive();
 
 private:
     unsigned short port;
@@ -29,7 +31,8 @@ private:
     char self_id;
 
     bool scanFile(const char *fname);
-    void printTable(char id, std::map<char, RTableValue> table, std::map<char, unsigned short>p); 
+    void printTable(char id, const std::map<char, RTableValue> &table, const std::map<char, unsigned short> &portTable);
+    void updateRT(char next, const std::map<char, RTableValue> &table);
 };
 
 #endif

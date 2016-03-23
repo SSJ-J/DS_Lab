@@ -19,5 +19,6 @@ int main(int argc, char *argv[]) {
 
     DSDV dsdv(strtol(argv[1], NULL, 10), argv[2]);
     dsdv.printTable();
+    dsdv.run();
 
 }

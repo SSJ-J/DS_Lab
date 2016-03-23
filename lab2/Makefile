@@ -1,7 +1,7 @@
 # compile and link flags
 CC = g++ -std=c++11
 CCFLAGS = -Wall -g
-LDFLAGS = -Wall -g
+LDFLAGS = -pthread -Wall -g
 
 # make rules
 TARGET = dsdv
