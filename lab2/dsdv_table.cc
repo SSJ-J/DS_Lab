@@ -9,11 +9,14 @@
 #include "dsdv_table.h"
 #include "dsdv_transfer.h"
 
-const size_t MAX_BUF = 512;
-
-const unsigned int SEND_INTERVEL = 10;
+// #define NSEQ     // #seq is useless
 
 using namespace std;
+
+const size_t MAX_BUF = 512;
+const unsigned int SEND_INTERVEL = 10;
+
+pthread_mutex_t mutex;
 
 // convert map to char[], return its size
 static inline int 
@@ -43,12 +46,12 @@ buf2map(map<char, RTableValue> &table, const char *buf, size_t len) {
 DSDV::DSDV(unsigned short portnum, char *fname) 
     : port(portnum), filename(fname) {
     scanFile(fname);
-    // ports[self_id] = port;
     rTable[self_id] = RTableValue{ self_id, 0, 0 };
+    pthread_mutex_init(&mutex, NULL);
 }
 
 void DSDV::printTable() {
-    printTable(self_id, rTable, ports);
+    printTable(self_id, rTable, near);
 }
 
 /* helper function used in pthread_create */
@@ -67,13 +70,19 @@ void DSDV::run() {
     }
     
     while(1) {
+        printTable();
         sleep(SEND_INTERVEL);
         /* send routing table */
         char buf[MAX_BUF];
-        rTable[self_id].seq += 2;           // add #seq
+        pthread_mutex_lock(&mutex);
+        if(checkFile()) {
+            rTable[self_id].seq += 2;           // add #seq
+            // printTable();
+        }
         int n = map2buf(rTable, buf, self_id);
-        for(auto i = ports.begin(); i != ports.end(); i++) {
-            trans->send(buf, n, i->second);
+        pthread_mutex_unlock(&mutex);
+        for(auto i = near.begin(); i != near.end(); i++) {
+            trans->send(buf, n, i->second.port);
         }
     }
 
@@ -88,33 +97,39 @@ bool DSDV::scanFile(const char *fname) {
     ifs >> n >> self_id;
     for(int i = 0; i < n; i++) {
        char dst;
-       float distance;
+       float cost;
        unsigned short port;
-       ifs >> dst >> distance >> port;
-       rTable[dst] = RTableValue{ dst, distance, 0 };
-       ports[dst] = port;
+       ifs >> dst >> cost >> port;
+       rTable[dst] = RTableValue{ dst, cost, 0 };
+       near[dst] = Neighbour{ port, cost };
     }
     ifs.close();
     return true;
 }
 
-/* print usage information */
-void DSDV::printTable(char id, const map<char, RTableValue> &table, const map<char, unsigned short> &p) {
-    cout << "==========================" << endl;
-    cout << id << endl;
-    cout << "dst\tnext\tdstnc\tseq" << endl; 
-    for(auto i = table.begin(); i != table.end(); i++) {
-        cout << i->first << '\t' 
-            << i->second.next << '\t'
-            << i->second.distance << '\t'
-            << i->second.seq << endl;
+/* return true if the file has been changed */
+bool DSDV::checkFile() {
+    ifstream ifs(filename.c_str());
+    if(!ifs) return true;  // open error
+    int n;      // number of neighbours
+    bool flag = false;
+
+    ifs >> n >> self_id;
+    for(int i = 0; i < n; i++) {
+        char dst;
+        float cost;
+        unsigned short port;
+        unsigned short seq;
+        ifs >> dst >> cost >> port;
+        if(cost != near[dst].cost) {
+            flag = true;
+            seq = rTable[dst].seq;
+            near[dst].cost = cost;
+            rTable[dst] = RTableValue{ dst, cost, seq };
+        }
     }
-    cout << endl;
-    cout << "node\tport" << endl;
-    for(auto i = p.begin(); i != p.end(); i++) {
-        cout << i->first << '\t'
-             << i->second << endl;
-    }
+    ifs.close();
+    return flag;
 }
 
 void *DSDV::thr_receive() {
@@ -125,26 +140,80 @@ void *DSDV::thr_receive() {
         int n = trans->receive(sock, buf);
         map<char, RTableValue> table;
         char id = buf2map(table, buf, n);
-        updateRT(id, table);
-        printTable();
+        pthread_mutex_lock(&mutex);
+        if(updateRT(id, table)) {
+            // rTable[self_id].seq += 2;           // add #seq 
+            // printTable();
+        }
+        pthread_mutex_unlock(&mutex);
     }
 
     return NULL;
 }
 
 /* update routing table */
-void DSDV::updateRT(char next, const map<char, RTableValue>& table) {
+bool DSDV::updateRT(char next, const map<char, RTableValue>& table) {
+    bool flag = false;
+
+    // update whose next hop is 'next' in my routing table
+    for(auto i = rTable.begin(); i != rTable.end(); i++) {
+        if(i->second.next != next) continue;
+        i->second.cost = rTable[next].cost + table.find(i->first)->second.cost;
+        i->second.seq = table.find(i->first)->second.seq;
+        flag = true;
+    }
+
     for(auto i = table.begin(); i != table.end(); i++) {
-        float new_dst = rTable[next].distance + i->second.distance; 
+        float new_dst = rTable[next].cost + i->second.cost; 
         unsigned short new_seq = i->second.seq;
-        if(rTable.find(i->first) == rTable.end())      // no this destination
+        if(rTable.find(i->first) == rTable.end()) {     // no this destination
             rTable[i->first] = RTableValue { next, new_dst, new_seq };
+            flag = true;
+        }
         else {
-            float dst = rTable[i->first].distance;
+            float dst = rTable[i->first].cost;
             unsigned short seq = rTable[i->first].seq;
             /* the condition of update */
-            if((seq == new_seq && new_dst < dst) || seq < new_seq) 
+#ifndef NSEQ    
+            if(seq < new_seq) {     // 'next' has been update
+                new_dst = near[next].cost + i->second.cost;
+                rTable[i->first] = RTableValue { next, new_dst, new_seq };  // recovery
+                flag = true;
+            }
+
+            else if(seq == new_seq && new_dst < dst) 
+#else
+            if(new_dst < dst) 
+#endif
+            {
                 rTable[i->first] = RTableValue { next, new_dst, new_seq};
+                flag = true;
+            }
         }
     }
+    return flag;
+}
+
+/* print usage information */
+void DSDV::printTable(char id, const map<char, RTableValue> &table, const map<char, Neighbour> &p) {
+    static int count = 1;
+    cout << "## print-out number " << count++ << endl;
+    for(auto i = table.begin(); i != table.end(); i++) {
+        if(i->first == id) continue;
+        cout << "shortest path to node " << i->first 
+             << " (seq# " << i->second.seq << "): "
+             << "the next hop is " << i->second.next
+             << "and the cost is " << i->second.cost <<", "
+             << id << " -> " << i->first
+             << " : " << i->second.cost << endl;
+    }
+    cout << endl;
+    /*
+    cout << "node\tport\tcost" << endl;
+    for(auto i = p.begin(); i != p.end(); i++) {
+        cout << i->first << '\t'
+             << i->second.port << '\t'
+             << i->second.cost << endl;
+    }
+    */
 }

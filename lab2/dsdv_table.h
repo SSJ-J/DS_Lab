@@ -4,12 +4,17 @@
 #include <string>
 #include <map>
 
-const float MAX_DIST = 10000.0f;
+const float MAX_COST = 10000.0f;
 
 struct RTableValue {    // key is dst
     char next;
-    float distance;
+    float cost;
     unsigned short seq;
+};
+
+struct Neighbour {
+    unsigned short port;
+    float cost;
 };
 
 class DSDV {
@@ -27,12 +32,14 @@ private:
     unsigned short port;
     std::string filename;
     std::map<char, RTableValue> rTable;
-    std::map<char, unsigned short>ports;
+    std::map<char, Neighbour> near;
     char self_id;
 
     bool scanFile(const char *fname);
-    void printTable(char id, const std::map<char, RTableValue> &table, const std::map<char, unsigned short> &portTable);
-    void updateRT(char next, const std::map<char, RTableValue> &table);
+    bool checkFile();
+    bool updateRT(char next, const std::map<char, RTableValue> &table);
+    void printTable(char id, const std::map<char, RTableValue> &table, const std::map<char, Neighbour> &nearTable);
+
 };
 
 #endif
