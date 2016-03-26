@@ -15,7 +15,8 @@
 using namespace std;
 
 const size_t MAX_BUF = 512;
-const unsigned int SEND_INTERVEL = 3;
+const unsigned int SEND_INTERVEL = 10;
+const unsigned int SEQ_PERIOD = 10;
 
 pthread_mutex_t mutex;
 
@@ -71,9 +72,11 @@ void DSDV::run() {
         cerr << "DSDV::run error: " << strerror(e) << endl;
     }
     
+    static unsigned int update_seq = 0;
     while(1) {
+        sleep(SEND_INTERVEL*2);
         printTable();
-        sleep(SEND_INTERVEL);
+
         /* send routing table */
         char buf[MAX_BUF];
         pthread_mutex_lock(&mutex);
@@ -87,6 +90,9 @@ void DSDV::run() {
             if(i->second.cost >= MAX_COST) continue;
             trans->send(buf, n, i->second.port);
         }
+        if(update_seq == SEQ_PERIOD-1)
+            rTable[self_id].seq += 2;           // update seq periodly
+        update_seq = (update_seq+1) % SEQ_PERIOD;
     }
 
     pthread_join(rtid, NULL);
@@ -133,6 +139,14 @@ bool DSDV::checkFile() {
             near[dst].cost = cost;
             rTable[dst] = RTableValue{ dst, cost, seq };
         }
+        
+        /* update the dst which use a broken router as its next hop */
+        if(cost == MAX_COST) {
+            for(auto i = rTable.begin(); i != rTable.end(); i++) {
+                if(i->second.next != dst) continue;
+                i->second.cost = MAX_COST;
+            }
+        }
     }
     ifs.close();
     return flag;
@@ -161,8 +175,10 @@ void *DSDV::thr_receive() {
 bool DSDV::updateRT(char next, const map<char, RTableValue>& table) {
     bool flag = false;
 
-    if(near[next].cost >= MAX_COST)
+    if(near[next].cost >= MAX_COST) {
         return false;       // ignore the broken way
+    }
+
     // update whose next hop is 'next' in my routing table
     for(auto i = rTable.begin(); i != rTable.end(); i++) {
         if(i->second.next != next) continue;

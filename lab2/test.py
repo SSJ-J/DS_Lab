@@ -19,23 +19,25 @@ def open_dsdv(n):
 def kill_dsdv():
     subprocess.call(["pkill", "dsdv"])
 
-def open_all():
+def open_all(drc):
     command = ["gnome-terminal"]
     for i in range(6):
         command.append("--tab")
         command.append("--title=%s"%(files[i]))
         command.append("-e")
-        command.append("%s %d %s" % (cmd, ports[i], files[i]))
+        command.append("%s %d %s/%s" % (cmd, ports[i], drc, files[i]))
     subprocess.call(command)
 
 if __name__ == '__main__':
     if len(sys.argv) == 1:
-        open_all()  
+        open_all('.')  
     elif sys.argv[1] == 'k':
         kill_dsdv()
-    elif sys.argv[1] == '-t':
-        n = int(sys.argv[2])
-        open_terminal(n)
+    elif sys.argv[1] == 't':
+        open_all(sys.argv[2])
+#n = int(sys.argv[2])
+#open_terminal(n)
+    
     else:
         n = int(sys.argv[1])
         open_dsdv(n)
