@@ -5,6 +5,7 @@
 #include <cstring>
 #include <unistd.h>
 #include <assert.h>
+#include <sstream>
 
 #include "dsdv_table.h"
 #include "dsdv_transfer.h"
@@ -14,7 +15,7 @@
 using namespace std;
 
 const size_t MAX_BUF = 512;
-const unsigned int SEND_INTERVEL = 10;
+const unsigned int SEND_INTERVEL = 3;
 
 pthread_mutex_t mutex;
 
@@ -25,6 +26,7 @@ map2buf(const map<char, RTableValue> &table, char *buf, char self_id) {
     size_t p = 1;
     for(auto i = table.begin(); i != table.end(); i++) {
         buf[p] = i->first;
+
         p += sizeof(char);
         *((RTableValue *) &buf[p]) = i->second;
         p += sizeof(RTableValue);
@@ -82,6 +84,7 @@ void DSDV::run() {
         int n = map2buf(rTable, buf, self_id);
         pthread_mutex_unlock(&mutex);
         for(auto i = near.begin(); i != near.end(); i++) {
+            if(i->second.cost >= MAX_COST) continue;
             trans->send(buf, n, i->second.port);
         }
     }
@@ -100,6 +103,7 @@ bool DSDV::scanFile(const char *fname) {
        float cost;
        unsigned short port;
        ifs >> dst >> cost >> port;
+       if(cost < 0) cost = MAX_COST;
        rTable[dst] = RTableValue{ dst, cost, 0 };
        near[dst] = Neighbour{ port, cost };
     }
@@ -121,9 +125,11 @@ bool DSDV::checkFile() {
         unsigned short port;
         unsigned short seq;
         ifs >> dst >> cost >> port;
+
+        if(cost < 0) cost = MAX_COST;
         if(cost != near[dst].cost) {
             flag = true;
-            seq = rTable[dst].seq;
+            seq = rTable[dst].seq + int(cost == MAX_COST);  // broken?
             near[dst].cost = cost;
             rTable[dst] = RTableValue{ dst, cost, seq };
         }
@@ -155,16 +161,26 @@ void *DSDV::thr_receive() {
 bool DSDV::updateRT(char next, const map<char, RTableValue>& table) {
     bool flag = false;
 
+    if(near[next].cost >= MAX_COST)
+        return false;       // ignore the broken way
     // update whose next hop is 'next' in my routing table
     for(auto i = rTable.begin(); i != rTable.end(); i++) {
         if(i->second.next != next) continue;
-        i->second.cost = rTable[next].cost + table.find(i->first)->second.cost;
-        i->second.seq = table.find(i->first)->second.seq;
+        if(i->second.seq <= table.find(i->first)->second.seq) {
+            i->second.cost = rTable[next].cost + table.find(i->first)->second.cost;
+            i->second.seq = table.find(i->first)->second.seq;
+        }
         flag = true;
     }
 
+    // update neighbour
+    if(near[next].cost < rTable[next].cost) {
+        rTable[next] = RTableValue { next, near[next].cost, table.find(next)->second.seq};
+    }
+
     for(auto i = table.begin(); i != table.end(); i++) {
-        float new_dst = rTable[next].cost + i->second.cost; 
+        if(i->first == self_id) continue;
+        float new_dst = rTable[next].cost + i->second.cost;
         unsigned short new_seq = i->second.seq;
         if(rTable.find(i->first) == rTable.end()) {     // no this destination
             rTable[i->first] = RTableValue { next, new_dst, new_seq };
@@ -175,7 +191,7 @@ bool DSDV::updateRT(char next, const map<char, RTableValue>& table) {
             unsigned short seq = rTable[i->first].seq;
             /* the condition of update */
 #ifndef NSEQ    
-            if(seq < new_seq) {     // 'next' has been update
+            if(seq < new_seq && new_seq%2 == 0) {     // 'next' has been update
                 new_dst = near[next].cost + i->second.cost;
                 rTable[i->first] = RTableValue { next, new_dst, new_seq };  // recovery
                 flag = true;
@@ -199,13 +215,21 @@ void DSDV::printTable(char id, const map<char, RTableValue> &table, const map<ch
     static int count = 1;
     cout << "## print-out number " << count++ << endl;
     for(auto i = table.begin(); i != table.end(); i++) {
-        if(i->first == id) continue;
+        // if(i->first == id) continue;
+        stringstream ss;
+        string cost_str;
+        if(i->second.cost >= MAX_COST) 
+            cost_str = "INF";
+        else {
+            ss << i->second.cost;
+            ss >> cost_str;
+        }
         cout << "shortest path to node " << i->first 
              << " (seq# " << i->second.seq << "): "
              << "the next hop is " << i->second.next
-             << "and the cost is " << i->second.cost <<", "
+             << " and the cost is " << cost_str <<", " 
              << id << " -> " << i->first
-             << " : " << i->second.cost << endl;
+             << " : " << cost_str << endl;
     }
     cout << endl;
     /*
