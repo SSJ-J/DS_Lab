@@ -84,13 +84,3 @@ func (mr *MapReduce) RunMaster() *list.List {
     return mr.KillWorkers()
 }
 
-
-
-
-
-
-
-
-
-
-

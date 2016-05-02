@@ -1,0 +1,20 @@
+# DS_Lab3 MapReduce
+沈斯杰   5130379036  ds_ssj@sjtu.edu.cn
+
+Part I
+    这个部分实现单机的mapreduce，需要实现main/wc.go中的两个接口就可以了。通过读原来提供的代码可以知道：
+(1)func Map(value string) *list.List
+    这个函数参数是原来的文本（已经转化为string），输出是每一个单词的键值对，键是单词本身，值是出现次数，构成一个list. 由于是list组织的，所以我们在遇到重复词的时候，不需要在这个过程中加起来，每次遇到都传一个（word, "1"）即可
+    其中使用strings.FieldsFunc这个函数将文本中的单词提取出来，十分方便
+(2)func Reduce(key string, values *list.List) string
+    这个函数的输入是一个键值对，键是单词，值是从各个map后的文件中，出现次数组成一个list，所以总次数就把list中各个次数相加即可，最后转换成string输出
+
+Part II
+    这个部分实现分布式的mapreduce，worker这边的代码已经写好，主要是master给不同worker分配任务。代码在mapreduce/master.go中的RunMaster
+    master和worker之间的通讯使用unix的RPC实现的
+    首先开了一个channel，可以异步接收到信息，这个信息用于保存已经做完任务的worker（或者是新注册的worker），给他分配任务。用goroutine来让不同worker并行执行，用sync.WaitGroup来等待所有map都完成后再执行reduce。
+
+Part III
+    容错。如果机器挂了，把它的任务给别的机器重新执行即可，因为操作是等幂的，所以多次执行同一个操作不会有问题
+    
+2016-05-02
