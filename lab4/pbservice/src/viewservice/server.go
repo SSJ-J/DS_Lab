@@ -17,6 +17,7 @@ type ViewServer struct {
 
   // Your declarations here.
   view View     // current view
+  newView View  // next view
   update bool   // can view be updated?
   lastPing  map[string]time.Time
 }
@@ -37,37 +38,55 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 
   // Your code here.
   vs.lastPing[args.Me] = time.Now()
-  v := &vs.view;
+  v := &vs.view
+  nv := &vs.newView // next view
   if(v.Viewnum < args.Viewnum) {
     return &Err{"Viewnum bigger!"}
   }
 
+  // first time
+  if(v.Viewnum == 0) {
+    nv.Primary = args.Me
+    nv.Viewnum++
+    *v = *nv
+    reply.View = *v
+    return nil
+  }
+
   // Restarted primary treated as dead
   if(v.Primary == args.Me && args.Viewnum == 0) {
-    v.Primary = "";
+    nv.Primary = "";
   }
- 
-  // update(and its condition)
-  vs.update = vs.update || ((v.Primary == args.Me) && (v.Viewnum == args.Viewnum)) || (v.Primary == "")
-  if(vs.update) {
-    // no such node in the view
-    if((args.Me != v.Primary && args.Me != v.Backup) || v.Primary == "") {
-      if(v.Primary == "" && v.Backup == "") {
-        v.Primary = args.Me
-      } else if(v.Primary == "") {
-        v.Primary = v.Backup
-        v.Backup = args.Me
-        if(v.Primary == v.Backup) {
-          v.Backup = ""
-        }
-      } else if(v.Backup == "") {
-        v.Backup = args.Me
-      } else {
-        return &Err{"more than one backups"}
-      }
-      v.Viewnum++
-      vs.update = false
+
+  // change next view (like state machine)
+  if(nv.Primary == "" && nv.Backup == "") {
+    nv.Primary = args.Me
+    nv.Viewnum++
+  } else if(nv.Primary == "") {
+    nv.Primary = nv.Backup
+    nv.Backup = args.Me
+    if(nv.Primary == nv.Backup) {
+      nv.Backup = ""
     }
+    nv.Viewnum++
+  } else if(nv.Backup == "") {
+    if(nv.Primary != args.Me) {
+      nv.Backup = args.Me
+      nv.Viewnum++
+    }
+  } else {
+    if(args.Me != nv.Primary && args.Me != nv.Backup) {
+      return &Err{"more than one backups"}
+    }
+  }
+
+  // update(and its condition)
+  vs.update = vs.update || ((v.Primary == args.Me) && (v.Viewnum == args.Viewnum))
+  // indeed update
+  if(vs.update && nv.Viewnum != v.Viewnum) {
+    nv.Viewnum = v.Viewnum + 1
+    *v = *nv
+    vs.update = false
   }
   reply.View = *v
   return nil
@@ -93,16 +112,18 @@ func (vs *ViewServer) tick() {
 
   // Your code here.
   nt := time.Now()
-  pm := &vs.view.Primary
-  bk := &vs.view.Backup
+  pm := &vs.newView.Primary
+  bk := &vs.newView.Backup
 
   if(*pm != "" && nt.Sub(vs.lastPing[*pm]) > DeadPings * PingInterval) {
     // fmt.Println("Primary has died", *pm)
     *pm = ""
+    vs.newView.Viewnum++
   }
   if(*bk != "" && nt.Sub(vs.lastPing[*bk]) > DeadPings * PingInterval) {
     // fmt.Println("Backup has died", *bk)
     *bk = ""
+    vs.newView.Viewnum++
   }
 
 }
@@ -121,6 +142,7 @@ func StartServer(me string) *ViewServer {
   vs := new(ViewServer)
   vs.me = me
   // Your vs.* initializations here.
+  vs.view = View{0, "", ""}
   vs.view = View{0, "", ""}
   vs.update = false
   vs.lastPing = make(map[string]time.Time)
