@@ -16,6 +16,18 @@ type ViewServer struct {
 
 
   // Your declarations here.
+  view View     // current view
+  update bool   // can view be updated?
+  lastPing  map[string]time.Time
+}
+
+// Simpe Error
+type Err struct {
+  info string
+}
+
+func (e *Err) Error() string {
+  return e.info+"\n";
 }
 
 //
@@ -24,7 +36,40 @@ type ViewServer struct {
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 
   // Your code here.
+  vs.lastPing[args.Me] = time.Now()
+  v := &vs.view;
+  if(v.Viewnum < args.Viewnum) {
+    return &Err{"Viewnum bigger!"}
+  }
 
+  // Restarted primary treated as dead
+  if(v.Primary == args.Me && args.Viewnum == 0) {
+    v.Primary = "";
+  }
+ 
+  // update(and its condition)
+  vs.update = vs.update || ((v.Primary == args.Me) && (v.Viewnum == args.Viewnum)) || (v.Primary == "")
+  if(vs.update) {
+    // no such node in the view
+    if((args.Me != v.Primary && args.Me != v.Backup) || v.Primary == "") {
+      if(v.Primary == "" && v.Backup == "") {
+        v.Primary = args.Me
+      } else if(v.Primary == "") {
+        v.Primary = v.Backup
+        v.Backup = args.Me
+        if(v.Primary == v.Backup) {
+          v.Backup = ""
+        }
+      } else if(v.Backup == "") {
+        v.Backup = args.Me
+      } else {
+        return &Err{"more than one backups"}
+      }
+      v.Viewnum++
+      vs.update = false
+    }
+  }
+  reply.View = *v
   return nil
 }
 
@@ -34,7 +79,7 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 
   // Your code here.
-
+  reply.View = vs.view 
   return nil
 }
 
@@ -47,6 +92,19 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 func (vs *ViewServer) tick() {
 
   // Your code here.
+  nt := time.Now()
+  pm := &vs.view.Primary
+  bk := &vs.view.Backup
+
+  if(*pm != "" && nt.Sub(vs.lastPing[*pm]) > DeadPings * PingInterval) {
+    // fmt.Println("Primary has died", *pm)
+    *pm = ""
+  }
+  if(*bk != "" && nt.Sub(vs.lastPing[*bk]) > DeadPings * PingInterval) {
+    // fmt.Println("Backup has died", *bk)
+    *bk = ""
+  }
+
 }
 
 //
@@ -63,6 +121,9 @@ func StartServer(me string) *ViewServer {
   vs := new(ViewServer)
   vs.me = me
   // Your vs.* initializations here.
+  vs.view = View{0, "", ""}
+  vs.update = false
+  vs.lastPing = make(map[string]time.Time)
 
   // tell net/rpc about our RPC server and handlers.
   rpcs := rpc.NewServer()
