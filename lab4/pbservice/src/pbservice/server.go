@@ -20,21 +20,78 @@ type PBServer struct {
   me string
   vs *viewservice.Clerk
   // Your declarations here.
+  view  viewservice.View
+  db map[string]string
+  connected bool
 }
 
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
-
   // Your code here.
+  reply.Err = OK
+  val, ok := pb.db[args.Key]
+  if(ok) {
+    reply.Value = val
+  } else {
+    reply.Err = ErrNoKey
+    reply.Value = ""
+  }
 
   return nil
 }
 
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
-  reply.Err = OK
-
-
   // Your code here.
+  // fmt.Println("Put", *args)
+  if(pb.view.Primary == pb.me) {
+    pb.mu.Lock()
+    reply.Err = OK
+    pb.db[args.Key] = args.Value
 
+    // send to backup
+    ok := false
+    for !ok {
+      if(pb.view.Backup == "") {
+          break // no backup
+      }
+      ok = call(pb.view.Backup, "PBServer.ForwardPut", args, reply)
+    }
+    pb.mu.Unlock()
+  } else {
+    // fmt.Println("I am not primary")
+    ok := false
+    for !ok {
+      ok = call(pb.view.Primary, "PBServer.Put", args, reply)
+    }
+  }
+  return nil
+}
+
+// forward to backup
+func (pb *PBServer) ForwardPut(args *PutArgs, reply *PutReply) error {
+  pb.mu.Lock()
+  reply.Err = OK
+  pb.db[args.Key] = args.Value
+  pb.mu.Unlock()
+  return nil
+}
+
+// Receive DB
+func (pb *PBServer) MoveDB(args *MoveDBArgs, reply *MoveDBReply) error {
+  reply.Err = OK
+  pb.mu.Lock()
+  if(len(pb.db) != 0) {    // not an empty db
+    // fmt.Println("Clear DB:", len(pb.db))
+    for key, _ := range pb.db {
+      delete(pb.db, key)
+    }
+  }
+
+  for k, v := range args.DB {
+    pb.db[k] = v
+  }
+  
+  // fmt.Println("Move DB:", len(args.DB))
+  pb.mu.Unlock()
   return nil
 }
 
@@ -46,8 +103,20 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 //   manage transfer of state from primary to new backup.
 //
 func (pb *PBServer) tick() {
-
   // Your code here.
+  backup := pb.view.Backup
+  v, e := pb.vs.Ping(pb.view.Viewnum)
+  if(e == nil) {
+    pb.view = v
+    newbk := pb.view.Backup
+    // Primary must move DB to new backup
+    if(backup != newbk && newbk != "" && pb.me == pb.view.Primary) {
+      // fmt.Println("Move to backup:", newbk, "sizw:",len(pb.db))
+      MoveDB(newbk, pb.db)
+    }
+  } else {
+    fmt.Println(e)
+  }
 }
 
 // tell the server to shut itself down.
@@ -57,12 +126,13 @@ func (pb *PBServer) kill() {
   pb.l.Close()
 }
 
-
 func StartServer(vshost string, me string) *PBServer {
   pb := new(PBServer)
   pb.me = me
   pb.vs = viewservice.MakeClerk(me, vshost)
   // Your pb.* initializations here.
+  pb.view = viewservice.View{0, "", ""}
+  pb.db = make(map[string]string)
 
   rpcs := rpc.NewServer()
   rpcs.Register(pb)

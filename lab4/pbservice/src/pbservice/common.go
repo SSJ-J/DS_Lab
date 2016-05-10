@@ -27,3 +27,10 @@ type GetReply struct {
 
 
 // Your RPC definitions here.
+type MoveDBArgs struct {
+  DB  map[string]string
+}
+
+type MoveDBReply struct {
+  Err Err
+}

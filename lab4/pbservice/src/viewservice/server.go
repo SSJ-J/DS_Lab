@@ -19,6 +19,7 @@ type ViewServer struct {
   view View     // current view
   newView View  // next view
   update bool   // can view be updated?
+  promote bool  // can backup be promoted to primary
   lastPing  map[string]time.Time
 }
 
@@ -37,7 +38,9 @@ func (e *Err) Error() string {
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 
   // Your code here.
+  vs.mu.Lock()
   vs.lastPing[args.Me] = time.Now()
+  vs.mu.Unlock()
   v := &vs.view
   nv := &vs.newView // next view
   if(v.Viewnum < args.Viewnum) {
@@ -53,6 +56,11 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
     return nil
   }
 
+  // is backup initialized?(can be promoted?)
+  if(v.Backup == args.Me) { 
+    vs.promote = (args.Viewnum == v.Viewnum)
+  }
+
   // Restarted primary treated as dead
   if(v.Primary == args.Me && args.Viewnum == 0) {
     nv.Primary = "";
@@ -63,12 +71,14 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
     nv.Primary = args.Me
     nv.Viewnum++
   } else if(nv.Primary == "") {
-    nv.Primary = nv.Backup
-    nv.Backup = args.Me
-    if(nv.Primary == nv.Backup) {
-      nv.Backup = ""
+    if(vs.promote) {
+      nv.Primary = nv.Backup
+      nv.Backup = args.Me
+      if(nv.Primary == nv.Backup) {
+        nv.Backup = ""
+      }
+      nv.Viewnum++
     }
-    nv.Viewnum++
   } else if(nv.Backup == "") {
     if(nv.Primary != args.Me) {
       nv.Backup = args.Me
@@ -76,7 +86,7 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
     }
   } else {
     if(args.Me != nv.Primary && args.Me != nv.Backup) {
-      return &Err{"more than one backups"}
+      // do nothing
     }
   }
 
@@ -145,6 +155,7 @@ func StartServer(me string) *ViewServer {
   vs.view = View{0, "", ""}
   vs.view = View{0, "", ""}
   vs.update = false
+  vs.promote = false
   vs.lastPing = make(map[string]time.Time)
 
   // tell net/rpc about our RPC server and handlers.

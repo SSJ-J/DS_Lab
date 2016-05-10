@@ -2,8 +2,9 @@ package pbservice
 
 import "viewservice"
 import "net/rpc"
+import "fmt"
 // You'll probably need to uncomment this:
-// import "time"
+import "time"
 
 
 type Clerk struct {
@@ -45,6 +46,8 @@ func call(srv string, rpcname string,
   if err == nil {
     return true
   }
+
+  // fmt.Println(err)
   return false
 }
 
@@ -56,10 +59,28 @@ func call(srv string, rpcname string,
 // says the key doesn't exist (has never been Put().
 //
 func (ck *Clerk) Get(key string) string {
-
   // Your code here.
+  args := &GetArgs{ key }
+  var reply GetReply
 
-  return "???"
+  ok := false
+  for !ok {
+    vok := false
+    var view viewservice.View 
+    for !vok {
+      view, vok = ck.vs.Get()
+    }
+    srv := view.Primary
+    if(srv != "") {
+      ok = call(srv, "PBServer.Get", args, &reply)
+    }
+    time.Sleep(viewservice.PingInterval)
+  }
+  if(reply.Err != OK) {
+    fmt.Println(reply.Err)
+  }
+
+  return reply.Value
 }
 
 //
@@ -67,6 +88,38 @@ func (ck *Clerk) Get(key string) string {
 // must keep trying until it succeeds.
 //
 func (ck *Clerk) Put(key string, value string) {
-
   // Your code here.
+  args := &PutArgs{ key, value }
+  var reply PutReply
+
+  ok := false
+  for !ok {
+    vok := false
+    var view viewservice.View 
+    for !vok {
+      view, vok = ck.vs.Get()
+    }
+    srv := view.Primary
+    if(srv != "") {
+      ok = call(srv, "PBServer.Put", args, &reply)
+    }
+    // time.Sleep(viewservice.PingInterval)   // sleep will abort locks
+  }
+  if(reply.Err != OK) {
+    fmt.Println(reply.Err)
+  }
+
+}
+
+// receive DB if a backup is built
+func MoveDB(backup string, db map[string]string) {
+  args := &MoveDBArgs{ db }
+  var reply MoveDBReply
+  ok := call(backup, "PBServer.MoveDB", args, &reply)
+  if(!ok) {
+    // fmt.Println("Call MoveDB error")
+  }
+  if(reply.Err != OK) {
+    fmt.Println(reply.Err)
+  }
 }
