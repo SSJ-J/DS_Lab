@@ -1,0 +1,16 @@
+# DS_Lab4 Primary and Backup
+沈斯杰   5130379036  ds_ssj@sjtu.edu.cn
+
+    这次的lab由于要处理不同failure的情况，所以是典型的面向测试编程。
+    
+Part A: The Viewservice
+    这一部分的实现用了状态机的思路，保存目前状态和新的状态。更新状态的时间点是目前view中的primary返回了这次view的ack。获得这个ack之后，就可以更新了。
+    这些状态包括：来了新的机器，primary挂，backup挂（机器用心跳进行检测）等等，大体思路是，primary挂用backupd顶替，backup挂了或者空着，或者用第三个空闲机器顶替。此外，用backup顶替primary的一个条件是backup已经收到了目前的view(即需要完成初始化)
+    这个Lab里面，一个primary至多只有一个backup。
+ 
+Part B: The primary/backup key/value service
+    这部分实现的是基于备份的key/value store。主要改动的是pbservice/server.go，实现Put和Get两个方法。主要的思想是，从primary拿数据，backup和primary始终保持同步。每次有新的backup，都需要将数据库的内容完整拷贝。
+    其中，还有一些并发控制的手段，主要就是加锁，尤其是对于map的写操作。
+    如果期间有断开连接，那么server需要自己检测到与viewserver断开连接了，需要返回错误信号给用户。
+
+2016-5-10

@@ -27,8 +27,13 @@ type PBServer struct {
 
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
   // Your code here.
+  if(!pb.connected) {   // lose connection with viewserver
+    reply.Err = ErrWrongServer
+    return nil
+  }
+
   reply.Err = OK
-  val, ok := pb.db[args.Key]
+  val, ok := pb.db[args.Key]    // unsafe
   if(ok) {
     reply.Value = val
   } else {
@@ -42,6 +47,11 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
   // Your code here.
   // fmt.Println("Put", *args)
+  if(!pb.connected) {   // lose connection with viewserver
+    reply.Err = ErrWrongServer
+    return nil
+  }
+
   if(pb.view.Primary == pb.me) {
     pb.mu.Lock()
     reply.Err = OK
@@ -107,6 +117,7 @@ func (pb *PBServer) tick() {
   backup := pb.view.Backup
   v, e := pb.vs.Ping(pb.view.Viewnum)
   if(e == nil) {
+    pb.connected = true
     pb.view = v
     newbk := pb.view.Backup
     // Primary must move DB to new backup
@@ -115,7 +126,8 @@ func (pb *PBServer) tick() {
       MoveDB(newbk, pb.db)
     }
   } else {
-    fmt.Println(e)
+    pb.connected = false
+    // fmt.Println(e)
   }
 }
 
@@ -133,6 +145,7 @@ func StartServer(vshost string, me string) *PBServer {
   // Your pb.* initializations here.
   pb.view = viewservice.View{0, "", ""}
   pb.db = make(map[string]string)
+  pb.connected = true
 
   rpcs := rpc.NewServer()
   rpcs.Register(pb)

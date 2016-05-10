@@ -62,9 +62,10 @@ func (ck *Clerk) Get(key string) string {
   // Your code here.
   args := &GetArgs{ key }
   var reply GetReply
+  reply.Err = ErrWrongServer 
 
   ok := false
-  for !ok {
+  for !ok || reply.Err != OK {
     vok := false
     var view viewservice.View 
     for !vok {
@@ -75,9 +76,6 @@ func (ck *Clerk) Get(key string) string {
       ok = call(srv, "PBServer.Get", args, &reply)
     }
     time.Sleep(viewservice.PingInterval)
-  }
-  if(reply.Err != OK) {
-    fmt.Println(reply.Err)
   }
 
   return reply.Value
