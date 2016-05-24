@@ -33,7 +33,9 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
   }
 
   reply.Err = OK
+  pb.mu.Lock()
   val, ok := pb.db[args.Key]    // unsafe
+  pb.mu.Unlock()
   if(ok) {
     reply.Value = val
   } else {
@@ -88,7 +90,6 @@ func (pb *PBServer) ForwardPut(args *PutArgs, reply *PutReply) error {
 // Receive DB
 func (pb *PBServer) MoveDB(args *MoveDBArgs, reply *MoveDBReply) error {
   reply.Err = OK
-  pb.mu.Lock()
   if(len(pb.db) != 0) {    // not an empty db
     // fmt.Println("Clear DB:", len(pb.db))
     for key, _ := range pb.db {
@@ -101,7 +102,6 @@ func (pb *PBServer) MoveDB(args *MoveDBArgs, reply *MoveDBReply) error {
   }
   
   // fmt.Println("Move DB:", len(args.DB))
-  pb.mu.Unlock()
   return nil
 }
 
@@ -123,7 +123,9 @@ func (pb *PBServer) tick() {
     // Primary must move DB to new backup
     if(backup != newbk && newbk != "" && pb.me == pb.view.Primary) {
       // fmt.Println("Move to backup:", newbk, "sizw:",len(pb.db))
+      pb.mu.Lock()
       MoveDB(newbk, pb.db)
+      pb.mu.Unlock()
     }
   } else {
     pb.connected = false
