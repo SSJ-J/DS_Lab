@@ -125,6 +125,7 @@ func (vs *ViewServer) tick() {
   pm := &vs.newView.Primary
   bk := &vs.newView.Backup
 
+  vs.mu.Lock()
   if(*pm != "" && nt.Sub(vs.lastPing[*pm]) > DeadPings * PingInterval) {
     // fmt.Println("Primary has died", *pm)
     *pm = ""
@@ -135,6 +136,7 @@ func (vs *ViewServer) tick() {
     *bk = ""
     vs.newView.Viewnum++
   }
+  vs.mu.Unlock()
 
 }
 

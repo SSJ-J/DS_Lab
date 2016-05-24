@@ -90,6 +90,7 @@ func (pb *PBServer) ForwardPut(args *PutArgs, reply *PutReply) error {
 // Receive DB
 func (pb *PBServer) MoveDB(args *MoveDBArgs, reply *MoveDBReply) error {
   reply.Err = OK
+  pb.mu.Lock()
   if(len(pb.db) != 0) {    // not an empty db
     // fmt.Println("Clear DB:", len(pb.db))
     for key, _ := range pb.db {
@@ -100,7 +101,7 @@ func (pb *PBServer) MoveDB(args *MoveDBArgs, reply *MoveDBReply) error {
   for k, v := range args.DB {
     pb.db[k] = v
   }
-  
+  pb.mu.Unlock()
   // fmt.Println("Move DB:", len(args.DB))
   return nil
 }
@@ -124,7 +125,7 @@ func (pb *PBServer) tick() {
     if(backup != newbk && newbk != "" && pb.me == pb.view.Primary) {
       // fmt.Println("Move to backup:", newbk, "sizw:",len(pb.db))
       pb.mu.Lock()
-      MoveDB(newbk, pb.db)
+      MoveDB(newbk, pb.db)  // defined in client.go
       pb.mu.Unlock()
     }
   } else {
